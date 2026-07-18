@@ -1,0 +1,9 @@
+.atl/
+.codegraph/
+tui_img/
+/encloud-tui
+/engram-tui
+coverage.out
+coverage/
+build/
+dist/
