@@ -165,11 +165,11 @@ func TestHomeViewReflectsKnownSetupStatus(t *testing.T) {
 	}
 
 	lines := strings.Split(view, "\n")
-	if strings.Index(lines[1], "██") < 0 || strings.LastIndex(lines[1], "╔") <= strings.Index(lines[1], "██") {
-		t.Fatalf("home header and status are not side by side:\n%s", view)
-	}
-	setupLine, menuLine := -1, -1
+	logoLine, setupLine, menuLine := -1, -1, -1
 	for index, line := range lines {
+		if strings.Contains(line, "██") && logoLine < 0 {
+			logoLine = index
+		}
 		if strings.Contains(line, "Setup Status") {
 			setupLine = index
 		}
@@ -177,8 +177,13 @@ func TestHomeViewReflectsKnownSetupStatus(t *testing.T) {
 			menuLine = index
 		}
 	}
-	if setupLine < 0 || menuLine <= setupLine {
-		t.Fatalf("status must precede the menu in the right column:\n%s", view)
+	if logoLine < 0 || setupLine <= logoLine || menuLine <= setupLine {
+		t.Fatalf("home blocks must be ordered logo, setup status, then main menu:\n%s", view)
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "██") && strings.Contains(line, "Setup Status") {
+			t.Fatalf("home logo and setup status must not share a row:\n%s", view)
+		}
 	}
 }
 
@@ -226,10 +231,10 @@ func TestWelcomeLogoUsesProvidedShadedWordmark(t *testing.T) {
 	logoText := embeddedWelcomeLogo()
 	lines := strings.Split(logoText, "\n")
 	want := []string{
-		"██▀██ ███▄██ ██▀██ ██    ██▀██ ██ ██ ██▀█▄      ▀██▀ ██ ██ ▀██▀",
-		"██▄   ██ ▀██ ██    ██    ██ ██ ██ ██ ██ ██       ██  ██ ██  ██ ",
-		"█▓░▄▄ █▓░ █▓ █▓░▄▄ █▓░▄▄ █▓░█▓ █▓░█▓ █▓░█▓       █▓░ █▓░█▓  █▓░",
-		"▀▀▀▀▀ ▀▀  ▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀        ▀▀  ▀▀▀▀▀ ▀▀▀▀",
+		"██▀██ ███▄██ ██▀██ ██    ██▀██ ██ ██ ██▀█▄",
+		"██▄   ██ ▀██ ██    ██    ██ ██ ██ ██ ██ ██",
+		"█▓░▄▄ █▓░ █▓ █▓░▄▄ █▓░▄▄ █▓░█▓ █▓░█▓ █▓░█▓",
+		"▀▀▀▀▀ ▀▀  ▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀",
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("wordmark height = %d rows, want %d", len(lines), len(want))
@@ -289,7 +294,8 @@ func TestWelcomeRevealProgressesLeftToRight(t *testing.T) {
 			want := welcomeLogoLines()[row]
 			gotGlyphs := []rune(line)
 			wantGlyphs := []rune(want)
-			if string(gotGlyphs[:column]) != string(wantGlyphs[:column]) || strings.TrimSpace(string(gotGlyphs[column:])) != "" {
+			revealed := min(column, len(wantGlyphs))
+			if string(gotGlyphs[:revealed]) != string(wantGlyphs[:revealed]) || strings.TrimSpace(string(gotGlyphs[revealed:])) != "" {
 				t.Fatalf("tick %d row %d = %q, want only the left %d columns revealed", column, row, line, column)
 			}
 		}

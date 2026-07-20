@@ -147,12 +147,8 @@ func (m Model) homeView() string {
 	menu := m.homeMenuPanel()
 	status := m.setupStatusPanel()
 	header := m.homeHeader()
-	rightColumn := strings.Join([]string{status, menu}, "\n")
-	compact := m.width > 0 && m.width <= lipgloss.Width(header)+2+lipgloss.Width(rightColumn)
-	content := lipgloss.JoinHorizontal(lipgloss.Top, header, "  ", rightColumn)
-	if compact {
-		content = strings.Join([]string{header, status, menu}, "\n")
-	}
+	content := strings.Join([]string{header, status, menu}, "\n")
+	compact := m.width > 0 && m.width < 80
 	footer := "up/down or j/k navigate  enter select  c configuration  esc/q quit"
 	if compact {
 		footer = "up/down or j/k navigate\nenter select  c configuration\nesc/q quit"
