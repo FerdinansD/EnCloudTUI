@@ -144,16 +144,145 @@ func (m Model) homeMenuItems() []string {
 }
 
 func (m Model) homeView() string {
-	menu := m.homeMenuPanel()
-	status := m.setupStatusPanel()
-	header := m.homeHeader()
-	content := strings.Join([]string{header, status, menu}, "\n")
+	content := strings.Join([]string{m.homeSummaryPanel(), m.homeMenuPanel()}, "\n")
 	compact := m.width > 0 && m.width < 80
 	footer := "up/down or j/k navigate  enter select  c configuration  esc/q quit"
 	if compact {
 		footer = "up/down or j/k navigate\nenter select  c configuration\nesc/q quit"
 	}
 	return strings.Join([]string{content, mutedStyle.Render(footer)}, "\n\n")
+}
+
+func (m Model) homeSummaryPanel() string {
+	availableWidth := 76
+	if m.width > 0 {
+		availableWidth = m.width
+		if m.width >= 80 {
+			availableWidth -= 4
+		}
+	}
+	const horizontalPadding = 2
+	contentLimit := max(1, availableWidth-2)
+	textWidthLimit := max(1, contentLimit-horizontalPadding*2)
+	status := "STATUS: SETUP REQUIRED"
+	nextStep := "Run initial configuration"
+	if m.cfg.Validate() == nil {
+		status = "STATUS: SETUP COMPLETE"
+		nextStep = "Open dashboard"
+	}
+
+	title := "☁"
+	lines := strings.Split(homeSummaryTopLine(title, status, textWidthLimit), "\n")
+	if m.welcomeCanAnimate() && welcomeLogoWidth() <= textWidthLimit {
+		lines = append(lines, strings.Split(m.welcomeLogo(), "\n")...)
+	}
+	remote := "Not configured"
+	if strings.TrimSpace(m.cfg.Server) != "" {
+		remote = "Configured"
+	}
+	token := "Missing"
+	if strings.TrimSpace(m.cfg.Token) != "" {
+		token = "Present"
+	}
+	lines = append(lines,
+		"Remote: "+remote,
+		"Token: "+token,
+		fmt.Sprintf("Projects: %d configured, %d selected", len(m.cfg.Projects), len(m.chosenProjects())),
+		"Next step: "+nextStep,
+	)
+	lines = append(lines, "> encloud-tui — Cloud synchronization workspace")
+
+	textWidth := 1
+	for _, line := range lines {
+		textWidth = max(textWidth, lipgloss.Width(line))
+	}
+	textWidth = min(textWidth, textWidthLimit)
+	contentWidth := textWidth + horizontalPadding*2
+
+	borderStyle := lipgloss.NewStyle().Foreground(successGreen)
+	var panel strings.Builder
+	panel.WriteString(borderStyle.Render("╔" + strings.Repeat("═", contentWidth) + "╗"))
+	panel.WriteString("\n")
+	panel.WriteString(borderStyle.Render("║"))
+	panel.WriteString(strings.Repeat(" ", contentWidth))
+	panel.WriteString(borderStyle.Render("║"))
+	for _, line := range lines {
+		for _, wrapped := range wrapHomeText(line, textWidth) {
+			panel.WriteString("\n")
+			panel.WriteString(borderStyle.Render("║"))
+			panel.WriteString(strings.Repeat(" ", horizontalPadding))
+			if strings.HasPrefix(wrapped, "> encloud-tui") {
+				panel.WriteString(mutedStyle.Render(wrapped))
+			} else {
+				panel.WriteString(wrapped)
+			}
+			panel.WriteString(strings.Repeat(" ", max(0, textWidth-lipgloss.Width(wrapped))+horizontalPadding))
+			panel.WriteString(borderStyle.Render("║"))
+		}
+	}
+	panel.WriteString("\n")
+	panel.WriteString(borderStyle.Render("║"))
+	panel.WriteString(strings.Repeat(" ", contentWidth))
+	panel.WriteString(borderStyle.Render("║"))
+	panel.WriteString("\n")
+	panel.WriteString(borderStyle.Render("╚" + strings.Repeat("═", contentWidth) + "╝"))
+	return panel.String()
+}
+
+func homeSummaryTopLine(title, status string, width int) string {
+	if lipgloss.Width(title)+lipgloss.Width(status)+1 > width {
+		return title + "\n" + status
+	}
+	return title + " " + status
+}
+
+func wrapHomeText(text string, width int) []string {
+	if lipgloss.Width(text) <= width {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	lines := make([]string, 0, len(words))
+	line := ""
+	for _, word := range words {
+		if lipgloss.Width(word) > width {
+			if line != "" {
+				lines = append(lines, line)
+				line = ""
+			}
+			for len(word) > 0 {
+				part, rest := homeTextChunk(word, width)
+				lines = append(lines, part)
+				word = rest
+			}
+			continue
+		}
+		if line == "" {
+			line = word
+			continue
+		}
+		if lipgloss.Width(line)+1+lipgloss.Width(word) <= width {
+			line += " " + word
+			continue
+		}
+		lines = append(lines, line)
+		line = word
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func homeTextChunk(text string, width int) (string, string) {
+	column := 0
+	for index, glyph := range text {
+		glyphWidth := lipgloss.Width(string(glyph))
+		if column+glyphWidth > width {
+			return text[:index], text[index:]
+		}
+		column += glyphWidth
+	}
+	return text, ""
 }
 
 func (m Model) homeMenuPanel() string {
@@ -165,40 +294,7 @@ func (m Model) homeMenuPanel() string {
 		}
 		lines = append(lines, line)
 	}
-	return shellPanel("Main Menu", strings.Join(lines, "\n"))
-}
-
-func (m Model) setupStatusPanel() string {
-	configuration := "Invalid"
-	if m.cfg.Validate() == nil {
-		configuration = "Complete"
-	}
-	server := "Not configured"
-	if strings.TrimSpace(m.cfg.Server) != "" {
-		server = "Configured"
-	}
-	token := "Missing"
-	if strings.TrimSpace(m.cfg.Token) != "" {
-		token = "Present"
-	}
-	operation := "Idle"
-	if m.screen == running {
-		operation = "Running"
-	} else if m.screen == confirm {
-		operation = "Awaiting confirmation"
-	}
-	projects := fmt.Sprintf("Projects: %d configured, %d selected", len(m.cfg.Projects), len(m.chosenProjects()))
-	if m.width > 0 && m.width < 76 {
-		projects = fmt.Sprintf("Projects: %d, %d selected", len(m.cfg.Projects), len(m.chosenProjects()))
-	}
-	lines := []string{
-		"Configuration: " + configuration,
-		"Server: " + server,
-		"Token: " + token,
-		projects,
-		"Operation: " + operation,
-	}
-	return shellPanel("Setup Status", strings.Join(lines, "\n"))
+	return lipgloss.NewStyle().Padding(0, 1).Render(successStyle.Bold(true).Render("Main Menu") + "\n" + strings.Join(lines, "\n"))
 }
 
 func shellPanel(title, content string) string {

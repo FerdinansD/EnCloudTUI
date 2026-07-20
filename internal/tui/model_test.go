@@ -155,41 +155,101 @@ func TestWizardViewKeepsErrorsAndFitsCompactTerminals(t *testing.T) {
 	}
 }
 
-func TestHomeViewReflectsKnownSetupStatus(t *testing.T) {
-	m := Model{screen: home, width: 120, height: 30}
-	view := stripANSI(m.View().Content)
-	for _, text := range []string{"Main Menu", "Initial configuration", "Setup Status", "Configuration: Invalid", "Server: Not configured", "Token: Missing", "Projects: 0 configured, 0 selected", "Operation: Idle", "╔", "╚"} {
-		if !strings.Contains(view, text) {
-			t.Fatalf("home view missing %q:\n%s", text, view)
-		}
-	}
+func TestHomeViewRendersCombinedHeaderAndTruthfulSetupStatus(t *testing.T) {
+	validConfig := config.Config{Server: "https://engram.example.com", Token: "12345678901234567890123456789012", Projects: []string{"alpha"}}
+	for _, tt := range []struct {
+		name string
+		cfg  config.Config
+		want []string
+	}{
+		{
+			name: "setup required",
+			want: []string{"☁", "STATUS: SETUP REQUIRED", "Remote: Not configured", "Token: Missing", "Projects: 0 configured, 0 selected", "Next step: Run initial configuration"},
+		},
+		{
+			name: "setup complete",
+			cfg:  validConfig,
+			want: []string{"☁", "STATUS: SETUP COMPLETE", "Remote: Configured", "Token: Present", "Projects: 1 configured, 1 selected", "Next step: Open dashboard"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{screen: home, width: 120, height: 30, cfg: tt.cfg, selected: map[string]bool{"alpha": true}}
+			view := stripANSI(m.View().Content)
+			for _, text := range append(tt.want, "> encloud-tui — Cloud synchronization workspace", "Main Menu") {
+				if !strings.Contains(view, text) {
+					t.Fatalf("home view missing %q:\n%s", text, view)
+				}
+			}
+			if strings.Contains(view, "Setup Status") || strings.Contains(view, "Operation:") {
+				t.Fatalf("home view retained a separate status panel:\n%s", view)
+			}
 
-	lines := strings.Split(view, "\n")
-	logoLine, setupLine, menuLine := -1, -1, -1
-	for index, line := range lines {
-		if strings.Contains(line, "██") && logoLine < 0 {
-			logoLine = index
-		}
-		if strings.Contains(line, "Setup Status") {
-			setupLine = index
-		}
-		if strings.Contains(line, "Main Menu") {
-			menuLine = index
-		}
+			lines := strings.Split(view, "\n")
+			logoLine, footerLine, bottomLine, menuLine := -1, -1, -1, -1
+			for index, line := range lines {
+				if strings.Contains(line, "☁") && !strings.Contains(line, tt.want[1]) {
+					t.Fatalf("top line must contain the setup status on the right:\n%s", view)
+				}
+				if strings.Contains(line, "██") && logoLine < 0 {
+					logoLine = index
+				}
+				if strings.Contains(line, "> encloud-tui") {
+					footerLine = index
+				}
+				if strings.Contains(line, "╚") && bottomLine < 0 {
+					bottomLine = index
+				}
+				if strings.Contains(line, "Main Menu") {
+					menuLine = index
+				}
+			}
+			if logoLine < 0 || footerLine <= logoLine || bottomLine <= footerLine || menuLine <= bottomLine {
+				t.Fatalf("combined panel must contain logo, footer, then precede Main Menu:\n%s", view)
+			}
+			if got := strings.Count(view, "╔"); got != 1 {
+				t.Fatalf("bordered panels = %d, want combined header only:\n%s", got, view)
+			}
+			menuIndent := strings.Repeat(" ", 3) // Two columns from the view and one from the menu block.
+			if !strings.HasPrefix(lines[menuLine], menuIndent+"Main Menu") || !strings.HasPrefix(lines[menuLine+1], menuIndent+"> "+m.homeMenuItems()[0]) {
+				t.Fatalf("Main Menu heading or selected item spacing changed:\n%s", view)
+			}
+		})
 	}
-	if logoLine < 0 || setupLine <= logoLine || menuLine <= setupLine {
-		t.Fatalf("home blocks must be ordered logo, setup status, then main menu:\n%s", view)
+}
+
+func TestHomeSummaryPanelUsesNaturalWidthAndPadding(t *testing.T) {
+	m := Model{screen: home, width: 120, height: 30}
+	panel := stripANSI(m.homeSummaryPanel())
+	lines := strings.Split(panel, "\n")
+
+	naturalTextWidth := max(welcomeLogoWidth(), lipgloss.Width("> encloud-tui — Cloud synchronization workspace"))
+	if got, want := lipgloss.Width(panel), naturalTextWidth+6; got != want {
+		t.Fatalf("panel width = %d, want natural content width plus border and padding %d", got, want)
 	}
-	for _, line := range lines {
-		if strings.Contains(line, "██") && strings.Contains(line, "Setup Status") {
-			t.Fatalf("home logo and setup status must not share a row:\n%s", view)
-		}
+	if got := lipgloss.Width(panel); got >= m.width-4 {
+		t.Fatalf("panel width = %d, want less than available width %d", got, m.width-4)
+	}
+	if got, want := lines[1], "║"+strings.Repeat(" ", naturalTextWidth+4)+"║"; got != want {
+		t.Fatalf("top padding row = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(lines[2], "║  ☁") || !strings.HasSuffix(lines[len(lines)-2], "  ║") {
+		t.Fatalf("panel content is not padded on both sides:\n%s", panel)
 	}
 }
 
 func TestHomeViewFitsCompactTerminal(t *testing.T) {
 	m := Model{screen: home, width: 40, height: 20}
-	for _, line := range strings.Split(stripANSI(m.View().Content), "\n") {
+	view := stripANSI(m.View().Content)
+	if !strings.Contains(view, "☁") || !strings.Contains(view, "STATUS: SETUP REQUIRED") || !strings.Contains(view, "Main Menu") {
+		t.Fatalf("compact home view is missing combined-panel content:\n%s", view)
+	}
+	if strings.Contains(view, "██") {
+		t.Fatalf("compact home view rendered the full wordmark:\n%s", view)
+	}
+	if got := lipgloss.Width(stripANSI(m.homeSummaryPanel())); got > m.width {
+		t.Fatalf("compact summary panel width = %d, exceeds terminal width %d", got, m.width)
+	}
+	for _, line := range strings.Split(view, "\n") {
 		if got := lipgloss.Width(line); got > m.width {
 			t.Fatalf("line width = %d, exceeds terminal width %d: %q", got, m.width, line)
 		}
