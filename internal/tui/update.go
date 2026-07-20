@@ -146,8 +146,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case "Initial configuration", "Edit configuration":
 				m.screen = wizard
 				m.setupInputs(m.storedCfg)
-			case "Open dashboard", "Select sync projects":
+			case "Open workspace":
 				m.screen = dashboard
+			case "Add project":
+				m.message = "Add project: Coming soon"
+			case "Sync center":
+				m.message = "Sync center: Coming soon"
 			case "Exit":
 				return m, tea.Quit
 			}

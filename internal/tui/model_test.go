@@ -384,19 +384,41 @@ func TestHomeViewFitsCompactTerminal(t *testing.T) {
 }
 
 func TestHomeMenuNavigationAndActionRouting(t *testing.T) {
-	m := Model{screen: home, cfg: config.Config{Server: "https://engram.example.com", Token: "12345678901234567890123456789012", Projects: []string{"alpha"}}, selected: map[string]bool{"alpha": true}, statuses: map[string]string{"alpha": "Idle"}}
-	if got, want := strings.Join(m.homeMenuItems(), "|"), "Open dashboard|Select sync projects|Edit configuration|Exit"; got != want {
+	cfg := config.Config{Server: "https://engram.example.com", Token: "12345678901234567890123456789012", Projects: []string{"alpha"}}
+	m := Model{screen: home, cfg: cfg, storedCfg: cfg, selected: map[string]bool{"alpha": true}, statuses: map[string]string{"alpha": "Idle"}}
+	if got, want := strings.Join(m.homeMenuItems(), "|"), "Open workspace|Add project|Sync center|Edit configuration|Exit"; got != want {
 		t.Fatalf("home menu = %q, want %q", got, want)
 	}
-	updated, _ := m.Update(keyMessage("j"))
-	m = updated.(Model)
-	if m.homeMenu != 1 {
-		t.Fatalf("menu index = %d, want 1", m.homeMenu)
-	}
-	updated, _ = m.Update(keyMessage("enter"))
-	m = updated.(Model)
-	if m.screen != dashboard {
-		t.Fatalf("screen = %v, want dashboard", m.screen)
+
+	for _, tt := range []struct {
+		name    string
+		index   int
+		screen  screen
+		message string
+	}{
+		{name: "open workspace", screen: dashboard},
+		{name: "add project placeholder", index: 1, screen: home, message: "Add project: Coming soon"},
+		{name: "sync center placeholder", index: 2, screen: home, message: "Sync center: Coming soon"},
+		{name: "edit configuration", index: 3, screen: wizard},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			menu := m
+			menu.homeMenu = tt.index
+			updated, _ := menu.Update(keyMessage("enter"))
+			got := updated.(Model)
+			if got.screen != tt.screen {
+				t.Fatalf("screen = %v, want %v", got.screen, tt.screen)
+			}
+			if got.message != tt.message {
+				t.Fatalf("message = %q, want %q", got.message, tt.message)
+			}
+			if tt.message != "" && !strings.Contains(stripANSI(got.View().Content), tt.message) {
+				t.Fatalf("home view is missing %q", tt.message)
+			}
+			if tt.screen == wizard && (got.inputs[0].Value() != menu.cfg.Server || got.inputs[1].Value() != menu.cfg.Token || got.inputs[2].Value() != "alpha") {
+				t.Fatalf("configuration wizard was not prefilled")
+			}
+		})
 	}
 }
 

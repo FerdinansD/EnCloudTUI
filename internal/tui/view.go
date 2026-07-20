@@ -136,11 +136,14 @@ func (m Model) homeMenuItems() []string {
 	if m.cfg.Validate() != nil {
 		return []string{"Initial configuration", "Exit"}
 	}
-	return []string{"Open dashboard", "Select sync projects", "Edit configuration", "Exit"}
+	return []string{"Open workspace", "Add project", "Sync center", "Edit configuration", "Exit"}
 }
 
 func (m Model) homeView() string {
 	content := strings.Join([]string{m.homeSummaryPanel(), m.homeMenuPanel()}, "\n")
+	if m.message != "" {
+		content += "\n\n" + m.message
+	}
 	compact := m.width > 0 && m.width < 80
 	footer := shortcutFooter(compact,
 		shortcutHint{"Up/Down", "Navigate"},
