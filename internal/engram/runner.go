@@ -116,7 +116,7 @@ func (r Runner) Start(ctx context.Context, cfg config.Config, mode Mode, project
 
 func (r Runner) run(ctx context.Context, cfg config.Config, project string, args []string, emit func(Event) bool) error {
 	cmd := exec.CommandContext(ctx, r.binary(), args...)
-	cmd.Env = append(os.Environ(), "ENGRAM_CLOUD_TOKEN="+cfg.Token)
+	cmd.Env = childEnvironment(cfg.Token)
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("capture command output: %w", err)
@@ -133,6 +133,17 @@ func (r Runner) run(ctx context.Context, cfg config.Config, project string, args
 		return fmt.Errorf("Engram command failed: %w", err)
 	}
 	return nil
+}
+
+func childEnvironment(publicCloudToken string) []string {
+	environment := make([]string, 0, len(os.Environ())+1)
+	for _, value := range os.Environ() {
+		name, _, _ := strings.Cut(value, "=")
+		if name != "ENGRAM_TOKEN" && name != "ENGRAM_CLOUD_TOKEN" {
+			environment = append(environment, value)
+		}
+	}
+	return append(environment, "ENGRAM_CLOUD_TOKEN="+publicCloudToken)
 }
 
 func streamOutput(reader io.Reader, project, secret string, emit func(Event) bool) {

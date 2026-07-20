@@ -16,10 +16,10 @@ var projectName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 var createTempFile = os.CreateTemp
 var writeTempFile = func(file *os.File, data []byte) (int, error) { return file.Write(data) }
 
-// Config holds credentials and the projects managed by the application.
+// Config holds the public Engram Cloud credential and projects managed by the application.
 type Config struct {
 	Server   string   `json:"server"`
-	Token    string   `json:"token"`
+	Token    string   `json:"token"` // Public Engram Cloud token.
 	Projects []string `json:"projects"`
 }
 

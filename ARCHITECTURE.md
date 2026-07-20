@@ -86,11 +86,11 @@ Logs are operational output, not an audit system. Stream trimmed command output 
 
 ## Configuration and Secrets
 
-`config.Config` is the boundary for server URL, token, and project list. It validates HTTPS-only server URLs without credentials, queries, or fragments; token shape; non-empty unique project names; and file permissions on load.
+`config.Config` is the boundary for server URL, public Engram Cloud token, and project list. Its `token` field is the public Engram Cloud token. It validates HTTPS-only server URLs without credentials, queries, or fragments; token shape; non-empty unique project names; and file permissions on load.
 
 The default configuration path is `~/.config/encloud-tui/config.json`. `ENCLOUD_TUI_CONFIG` overrides it; `ENGRAM_TUI_CONFIG` is a temporary fallback when the preferred variable is unset. With no override, an existing new path wins, otherwise an existing `~/.config/engram-tui/config.json` is used without copying its credentials. Saving creates a new config directory with `0700` permissions, writes a same-directory temporary file with `0600`, syncs it, renames it atomically, and syncs the directory. Existing directory permissions are not changed.
 
-The token is masked in the wizard and is never a command argument, UI string, or log value. The runner passes it only as `ENGRAM_CLOUD_TOKEN` in the child process environment. It is not an application-level environment override and must never be persisted from process environment.
+The public Cloud token is masked in the wizard and is never a command argument, UI string, or log value. The runner removes inherited `ENGRAM_TOKEN` and `ENGRAM_CLOUD_TOKEN` variables, then passes the configured public Cloud token as `ENGRAM_CLOUD_TOKEN` to every child process because the external Engram CLI requires that variable name. Environment-derived tokens are never persisted.
 
 ## Layout and Style System
 
@@ -127,7 +127,7 @@ Each slice remains independently buildable and must retain secure persistence, c
 
 - A direct Engram Cloud HTTP client, background synchronization, or parallel project operations.
 - Multiple Bubble Tea models, a router framework, an event bus, dependency injection, or repository/service interfaces without concrete need.
-- Credential import from external scripts, hidden path dependencies, or application configuration through `ENGRAM_CLOUD_TOKEN`.
+- Credential import from external scripts, hidden path dependencies, or application configuration through inherited `ENGRAM_CLOUD_TOKEN`.
 - Persistent operation history, telemetry, remote project discovery, user accounts, or role management.
 - Renaming the module, binary, or command independently.
 

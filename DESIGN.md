@@ -15,7 +15,7 @@ The references include graphical glow, blur, gradients, pixel typography, a wind
 | Reference treatment | Terminal-safe approximation |
 | --- | --- |
 | Neon glow or blur | Bright ANSI green for focal text, plus bold weight and surrounding empty space. Do not simulate blur with repeated characters. |
-| Pixel font | Use the terminal's monospace font. Do not require a custom font or render text as pixels. |
+| Pixel font | Use the terminal's monospace font. The Welcome logotype alone may use its repository-authored bitmap; do not require a custom font. |
 | Soft gradients and shadows | Use a uniform dark background with one or two ANSI text intensities. |
 | Rounded window and traffic-light controls | Do not render as interactive UI. The terminal emulator owns its window chrome. |
 | Fine box-drawing | Prefer Unicode box drawing when supported; provide ASCII borders as a complete fallback. |
@@ -104,14 +104,17 @@ Key labels must describe the action, not merely repeat the command. For example,
 
 **Hierarchy**
 
-1. Centered product title: `EnCloud TUI` in bold `accent`.
-2. Small attribution line only when product copy requires it; render it in `muted` and do not make it interactive.
-3. Bottom-centered primary prompt: `[enter] Start configuration`.
+1. Centered nine-row custom bitmap logotype spelling `EnCloud TUI`, in green `accent`. Each `E`, `n`, `C`, `l`, `o`, `u`, `d`, `T`, `U`, and `I` glyph is an explicit 9x7 binary matrix in repository code; capitalization is exact. The renderer converts every logical `1` to `██` and every `0` to two spaces. Do not use FIGlet-style ASCII art, generators, alphabetic characters as the large logo, external fonts, assets, or automatic scaling. Lip Gloss may only position the rendered block and apply its green foreground style.
+2. Centered normal-text attribution: `by Ferdinans`, in `muted`, positioned independently below the logotype.
+3. Bottom-centered primary prompt: `> Press Enter to start configuration <` in normal monospace text using `accent`.
 
 **Layout**
 
-- Use the available viewport with generous vertical whitespace; title cluster is visually centered, and the entry prompt sits in the lower third.
-- A single outer frame is optional only at comfortable dimensions. It must not imitate terminal window buttons.
+- At comfortable dimensions, center the logotype horizontally using its ANSI-stripped rendered visual width, including the doubled pixel columns. The rendered block must never exceed the viewport width.
+- Render the logotype at nine terminal rows using the custom bitmap glyphs, not font-size changes.
+- Compose the full layout with Lip Gloss `NewLayer(...).X(...).Y(...).Z(...)` and `NewCompositor(layers...).Render()`. Do not construct a canvas directly.
+- With `centerY = height / 2`, position the logotype at `centerY - 5`, the byline at `centerY + 5`, and the action at `height - 5`; clamp coordinates to zero and use the compact fallback unless the layers fit without overlap.
+- Do not render an outer frame or terminal-window imitation.
 - No operational status, project data, configuration values, or secret-bearing data appears here.
 
 **States and interactions**
@@ -119,7 +122,8 @@ Key labels must describe the action, not merely repeat the command. For example,
 | State | Presentation | Input | Result |
 | --- | --- | --- |
 | Ready | Primary prompt is `accent`; all other copy is quiet. | `enter` | Transition to Initial Configuration. |
-| Unsupported/narrow viewport | Keep title and `[enter] Start configuration`; drop outer frame and attribution first. | `enter` | Same transition. |
+| Constrained width or height | Use compact centered `EnCloud TUI` text and the primary prompt; below the full prompt width, wrap it to `Press Enter to` and `start configuration`. Omit the logotype and attribution before the title or action. | `enter` | Same transition. |
+| Ready | The primary prompt is `accent`; all other copy is quiet. | `q`, `ctrl+c` | Quit the application. |
 
 There is no pointer affordance, animation dependency, or timed auto-transition.
 

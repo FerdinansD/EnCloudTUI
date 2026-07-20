@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -15,7 +16,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.screen == wizard && len(m.inputs) > 0 {
+			m.sizeWizardInputs()
+		}
+		if !m.welcomeRevealStarted && m.welcomeCanAnimate() {
+			m.welcomeRevealStarted = true
+			m.welcomeAnimating = true
+			return m, welcomeTick()
+		}
+		if m.welcomeAnimating && !m.welcomeCanAnimate() {
+			m.welcomeAnimating = false
+			m.welcomeReveal = welcomeLogoWidth()
+		}
 		return m, nil
+	case welcomeTickMsg:
+		if !m.welcomeAnimating {
+			return m, nil
+		}
+		m.welcomeReveal++
+		if m.welcomeReveal >= welcomeLogoWidth() {
+			m.welcomeReveal = welcomeLogoWidth()
+			m.welcomeAnimating = false
+			return m, nil
+		}
+		return m, welcomeTick()
 	case operationEventMsg:
 		return m.applyEvent(msg.event)
 	case spinner.TickMsg:
@@ -31,6 +55,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+type welcomeTickMsg struct{}
+
+func welcomeTick() tea.Cmd {
+	return tea.Tick(40*time.Millisecond, func(time.Time) tea.Msg {
+		return welcomeTickMsg{}
+	})
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -83,6 +115,38 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.inputs[m.focus], cmd = m.inputs[m.focus].Update(msg)
 		return m, cmd
+	}
+	if m.screen == home {
+		if key == "ctrl+c" || key == "q" || key == "esc" {
+			return m, tea.Quit
+		}
+		if key == "c" {
+			m.screen = wizard
+			m.setupInputs(m.storedCfg)
+			return m, nil
+		}
+		items := m.homeMenuItems()
+		switch key {
+		case "up", "k":
+			if m.homeMenu > 0 {
+				m.homeMenu--
+			}
+		case "down", "j":
+			if m.homeMenu < len(items)-1 {
+				m.homeMenu++
+			}
+		case "enter":
+			switch items[m.homeMenu] {
+			case "Initial configuration", "Edit configuration":
+				m.screen = wizard
+				m.setupInputs(m.storedCfg)
+			case "Open dashboard", "Select sync projects":
+				m.screen = dashboard
+			case "Exit":
+				return m, tea.Quit
+			}
+		}
+		return m, nil
 	}
 
 	switch key {

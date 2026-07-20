@@ -77,6 +77,8 @@ func TestRunnerExecutesSequentiallyAndRedactsStreamedOutput(t *testing.T) {
 	token := "12345678901234567890123456789012"
 	t.Setenv("ENGRAM_TUI_TEST_HELPER", "1")
 	t.Setenv("ENGRAM_TUI_TEST_COMMANDS", path)
+	t.Setenv("ENGRAM_TOKEN", "inherited-private-token-must-not-be-used")
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "inherited-token-must-not-be-used")
 	runner := Runner{Binary: os.Args[0]}
 	cfg := config.Config{Server: "https://engram.example.com", Token: token, Projects: []string{"alpha", "beta"}}
 
@@ -98,11 +100,11 @@ func TestRunnerExecutesSequentiallyAndRedactsStreamedOutput(t *testing.T) {
 	}
 	got := strings.Split(strings.TrimSpace(string(data)), "\n")
 	want := []string{
-		"cloud config --server https://engram.example.com",
-		"cloud enroll alpha",
-		"sync --cloud --status --project alpha",
-		"cloud enroll beta",
-		"sync --cloud --status --project beta",
+		"cloud config --server https://engram.example.com|" + token + "|",
+		"cloud enroll alpha|" + token + "|",
+		"sync --cloud --status --project alpha|" + token + "|",
+		"cloud enroll beta|" + token + "|",
+		"sync --cloud --status --project beta|" + token + "|",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("commands = %#v, want %#v", got, want)
@@ -130,9 +132,9 @@ func TestRunnerHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	defer file.Close()
-	if _, err := fmt.Fprintln(file, strings.Join(args, " ")); err != nil {
+	fmt.Printf("token=%s\n", os.Getenv("ENGRAM_CLOUD_TOKEN"))
+	if _, err := fmt.Fprintln(file, strings.Join(args, " ")+"|"+os.Getenv("ENGRAM_CLOUD_TOKEN")+"|"+os.Getenv("ENGRAM_TOKEN")); err != nil {
 		os.Exit(2)
 	}
-	fmt.Printf("token=%s\n", os.Getenv("ENGRAM_CLOUD_TOKEN"))
 	os.Exit(0)
 }

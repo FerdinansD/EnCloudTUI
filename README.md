@@ -62,7 +62,7 @@ The example in Initial Configuration uses a safe placeholder token. Replace it o
 
 Path selection is deterministic: `ENCLOUD_TUI_CONFIG` takes precedence, then `ENGRAM_TUI_CONFIG`. With neither variable set, the application uses `~/.config/encloud-tui/config.json` when it exists. If it does not exist but the legacy `~/.config/engram-tui/config.json` exists, the application safely uses that existing file instead. It never copies, exposes, or imports credentials; use the wizard to save a configuration at the new default path when you are ready to migrate it.
 
-The token input is masked. The application does not put the token in command arguments, logs, or screen output; it supplies it only through `ENGRAM_CLOUD_TOKEN` to the child process. A missing `engram` executable is reported in the TUI without a crash.
+The token input is masked. The saved `token` configuration value is the public Engram Cloud token. Every child process receives that token as `ENGRAM_CLOUD_TOKEN`, because the external `engram` CLI requires that variable name. The application removes inherited `ENGRAM_TOKEN` and `ENGRAM_CLOUD_TOKEN` values from the child environment. It does not put tokens in command arguments, logs, or screen output. A missing `engram` executable is reported in the TUI without a crash.
 
 ## Development
 
