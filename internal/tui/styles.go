@@ -9,4 +9,5 @@ var (
 	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	successStyle  = lipgloss.NewStyle().Foreground(successGreen)
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+	shortcutStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 )

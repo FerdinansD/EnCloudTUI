@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/piwi/encloud-tui/internal/config"
 )
 
 const (
@@ -116,10 +115,7 @@ func (m Model) View() tea.View {
 	if m.width > 0 && m.width < 80 {
 		padding = 0
 	}
-	if m.screen == home {
-		return tea.NewView(lipgloss.NewStyle().Padding(1, padding).Render(content))
-	}
-	return tea.NewView(lipgloss.NewStyle().Padding(1, padding).Render(strings.Join([]string{m.shellHeader(), content}, "\n\n")))
+	return tea.NewView(lipgloss.NewStyle().Padding(1, padding).Render(content))
 }
 
 func (m Model) shellHeader() string {
@@ -146,11 +142,14 @@ func (m Model) homeMenuItems() []string {
 func (m Model) homeView() string {
 	content := strings.Join([]string{m.homeSummaryPanel(), m.homeMenuPanel()}, "\n")
 	compact := m.width > 0 && m.width < 80
-	footer := "up/down or j/k navigate  enter select  c configuration  esc/q quit"
-	if compact {
-		footer = "up/down or j/k navigate\nenter select  c configuration\nesc/q quit"
-	}
-	return strings.Join([]string{content, mutedStyle.Render(footer)}, "\n\n")
+	footer := shortcutFooter(compact,
+		shortcutHint{"Up/Down", "Navigate"},
+		shortcutHint{"Enter", "Select"},
+		shortcutHint{"c", "Configure"},
+		shortcutHint{"Esc", "Quit"},
+		shortcutHint{"q / Ctrl+C", "Quit"},
+	)
+	return strings.Join([]string{content, footer}, "\n\n")
 }
 
 func (m Model) homeSummaryPanel() string {
@@ -326,105 +325,102 @@ func (m Model) dashboardView() string {
 	if m.message != "" {
 		b.WriteString("\n" + m.message + "\n")
 	}
-	b.WriteString("\n" + mutedStyle.Render("up/down navigate  space select  a all  p pull  u push  s status  c config  q quit"))
+	b.WriteString("\n" + shortcutFooter(m.width > 0 && m.width < 80,
+		shortcutHint{"Space", "Select"},
+		shortcutHint{"a", "All"},
+		shortcutHint{"p", "Pull"},
+		shortcutHint{"u", "Push"},
+		shortcutHint{"s", "Status"},
+		shortcutHint{"c", "Configure"},
+		shortcutHint{"q / Ctrl+C", "Quit"},
+	))
 	return b.String()
 }
 
 func (m Model) wizardView() string {
 	compact := m.width > 0 && m.width < 56
-	panel := m.wizardPanel()
-	width := lipgloss.Width(panel)
-
-	heading := successStyle.Bold(true).Render("Initial Configuration")
-	metadata := mutedStyle.Render("Step 1 of 2") + "\n" + successStyle.Render("Next: Sync dashboard")
-	header := heading + "\n" + mutedStyle.Render("Initial configuration")
-	if compact {
-		header += "\n" + metadata
-	} else {
-		header = lipgloss.PlaceHorizontal(width, lipgloss.Left,
-			lipgloss.JoinHorizontal(lipgloss.Top, header, strings.Repeat(" ", max(1, width-lipgloss.Width(heading)-lipgloss.Width(metadata))), metadata),
-		)
+	width := 76
+	if m.width > 0 {
+		width = max(20, m.width-4)
 	}
-
-	intro := "Configure your cloud connection to continue.\nAfter setup, EnCloud TUI will open the full sync dashboard."
-	if compact {
-		intro = "Configure your cloud connection.\nAfter setup, the sync dashboard opens."
+	field := m.wizardField()
+	step := fmt.Sprintf("Step %d of 3", m.focus+1)
+	content := []string{
+		successStyle.Bold(true).Render("Initial Configuration"),
+		"",
+		successStyle.Bold(true).Render(step),
+		mutedStyle.Render(field.help),
+		"",
+		successStyle.Bold(true).Render(field.label),
+		m.inputs[m.focus].View(),
 	}
-
-	status := lipgloss.NewStyle().Width(width).Render(m.wizardStatus())
-	separator := mutedStyle.Render(strings.Repeat("-", width))
-	footer := m.wizardFooter(width, compact)
-	bottom := lipgloss.NewStyle().Width(width).Render(mutedStyle.Render("Press Enter to save and start configuration."))
-	return strings.Join([]string{header, mutedStyle.Render(intro), panel, status, separator, footer, bottom}, "\n\n")
+	if status := m.wizardStatus(); status != "" {
+		content = append(content, "", status)
+	}
+	content = append(content, "", m.wizardFooter(compact))
+	panel := lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.Border{Top: "═", Bottom: "═", Left: "║", Right: "║", TopLeft: "╔", TopRight: "╗", BottomLeft: "╚", BottomRight: "╝"}).
+		BorderForeground(successGreen).
+		Padding(1, 2).
+		Render(strings.Join(content, "\n"))
+	return panel
 }
 
-func (m Model) wizardPanel() string {
-	fields := []struct {
-		label string
-		help  string
-	}{
-		{"Server URL", "Cloud server base URL"},
-		{"Cloud Token", "Your EnCloud API token"},
-		{"Projects", "Comma-separated project IDs"},
+func (m Model) wizardField() struct{ label, help string } {
+	fields := []struct{ label, help string }{
+		{"Server URL", "HTTPS server URL, for example https://engram.example.com"},
+		{"Cloud Token", "32 to 512 non-whitespace characters. Input is masked."},
+		{"Projects", "Comma-separated project IDs, for example alpha, beta"},
 	}
-	border := lipgloss.Border{Top: "═", Bottom: "═", Left: "║", Right: "║", TopLeft: "╔", TopRight: "╗", BottomLeft: "╚", BottomRight: "╝"}
-	rows := make([]string, 0, len(fields)+1)
-	for index, field := range fields {
-		label := mutedStyle.Render(field.label)
-		borderColor := lipgloss.Color("240")
-		if index == m.focus {
-			label = successStyle.Bold(true).Render(field.label)
-			borderColor = successGreen
-		}
-		input := ""
-		if index < len(m.inputs) {
-			input = m.inputs[index].View()
-		}
-		box := lipgloss.NewStyle().Border(border).BorderForeground(borderColor).Padding(0, 1).Render(input)
-		rows = append(rows, label+"\n"+mutedStyle.Render(field.help)+"\n"+box)
+	if m.focus < 0 || m.focus >= len(fields) {
+		return fields[0]
 	}
-	preview := successStyle.Render("[x] Preview config") + "  " + mutedStyle.Render("Review values before saving.")
-	if m.width > 0 && m.width < 56 {
-		preview = successStyle.Render("[x] Preview config") + "\n" + mutedStyle.Render("Review values before saving.")
-	}
-	rows = append(rows, preview)
-	return lipgloss.NewStyle().Border(border).BorderForeground(successGreen).Padding(1, 2).Render(strings.Join(rows, "\n\n"))
+	return fields[m.focus]
 }
 
 func (m Model) wizardStatus() string {
 	if m.message != "" {
 		return errorStyle.Render(m.message)
 	}
-	if len(m.inputs) != 3 {
-		return mutedStyle.Render("Required before continuing")
+	if m.focus == 2 {
+		return mutedStyle.Render("Enter saves after validating the complete configuration.")
 	}
-	cfg := config.Config{Server: strings.TrimSpace(m.inputs[0].Value()), Token: strings.TrimSpace(m.inputs[1].Value()), Projects: splitProjects(m.inputs[2].Value())}
-	if cfg.Validate() != nil {
-		return mutedStyle.Render("Required before continuing")
-	}
-	return successStyle.Render("Ready to save configuration")
+	return mutedStyle.Render("Enter continues to the next step.")
 }
 
-func (m Model) wizardFooter(width int, compact bool) string {
-	if compact {
-		return mutedStyle.Render("tab Next field\nenter Save & continue\nesc Cancel")
+func (m Model) wizardFooter(compact bool) string {
+	hints := make([]shortcutHint, 0, 4)
+	if m.focus > 0 {
+		hints = append(hints, shortcutHint{"Shift+Tab", "Back"})
 	}
-	hints := []string{"tab Next field", "enter Save & continue", "esc Cancel"}
-	column := max(1, width/len(hints))
-	for index, hint := range hints {
-		hints[index] = lipgloss.PlaceHorizontal(column, lipgloss.Left, mutedStyle.Render(hint))
+	if m.focus == 0 {
+		hints = append(hints, shortcutHint{"Enter", "Continue"})
+	} else if m.focus == 2 {
+		hints = append(hints, shortcutHint{"Enter", "Save configuration"})
+	} else {
+		hints = append(hints, shortcutHint{"Enter", "Continue"})
 	}
-	return strings.Join(hints, "")
+	hints = append(hints,
+		shortcutHint{"Esc", "Discard & return home"},
+		shortcutHint{"Ctrl+C", "Quit"},
+	)
+	return shortcutFooter(compact, hints...)
 }
 
 func (m Model) confirmView() string {
-	return titleStyle.Render("Confirm operation") + "\n\n" + fmt.Sprintf("Run %s for %d selected project(s)?\n\n", m.pending, len(m.chosenProjects())) + mutedStyle.Render("enter/y confirm  n/esc cancel")
+	footer := shortcutFooter(m.width > 0 && m.width < 64,
+		shortcutHint{"Enter / y", "Confirm"},
+		shortcutHint{"Esc / n", "Cancel"},
+		shortcutHint{"q / Ctrl+C", "Quit"},
+	)
+	return titleStyle.Render("Confirm operation") + "\n\n" + fmt.Sprintf("Run %s for %d selected project(s)?\n\n", m.pending, len(m.chosenProjects())) + footer
 }
 
 func (m Model) runningView() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("EnCloud TUI") + " " + m.spinner.View() + "\n")
-	b.WriteString(mutedStyle.Render("Operations run sequentially. Press esc or ctrl+c to cancel."))
+	b.WriteString(mutedStyle.Render("Operations run sequentially."))
 	b.WriteString("\n\n")
 	start := 0
 	if len(m.logs) > 12 {
@@ -433,5 +429,26 @@ func (m Model) runningView() string {
 	for _, line := range m.logs[start:] {
 		b.WriteString(line + "\n")
 	}
+	b.WriteString("\n" + shortcutFooter(m.width > 0 && m.width < 64,
+		shortcutHint{"Esc", "Cancel operation"},
+		shortcutHint{"q / Ctrl+C", "Quit"},
+	))
 	return b.String()
+}
+
+type shortcutHint struct {
+	key   string
+	label string
+}
+
+func shortcutFooter(compact bool, hints ...shortcutHint) string {
+	rendered := make([]string, len(hints))
+	for index, hint := range hints {
+		rendered[index] = shortcutStyle.Render("[ "+hint.key+" ]") + " " + mutedStyle.Render(hint.label)
+	}
+	separator := mutedStyle.Render("  ·  ")
+	if compact {
+		separator = "\n"
+	}
+	return strings.Join(rendered, separator)
 }

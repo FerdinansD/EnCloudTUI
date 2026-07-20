@@ -67,8 +67,11 @@ func welcomeTick() tea.Cmd {
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if key == "ctrl+c" || (key == "q" && m.screen != wizard) {
+		return m, tea.Quit
+	}
 	if m.screen == running {
-		if key == "ctrl+c" || key == "esc" {
+		if key == "esc" {
 			if m.cancel != nil {
 				m.cancel()
 				m.message = "Cancelling operation..."
@@ -88,26 +91,29 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.screen == wizard {
 		switch key {
-		case "ctrl+c", "esc":
-			if m.cfg.Validate() == nil {
-				m.screen = dashboard
-				m.resetProjects()
-			} else {
-				return m, tea.Quit
-			}
+		case "esc":
+			m.screen = home
+			m.inputs = nil
+			m.focus = 0
+			m.message = ""
 			return m, nil
-		case "tab", "down":
+		case "shift+tab":
+			if m.focus == 0 {
+				return m, nil
+			}
 			m.inputs[m.focus].Blur()
-			m.focus = (m.focus + 1) % len(m.inputs)
-			return m.focusInput()
-		case "shift+tab", "up":
-			m.inputs[m.focus].Blur()
-			m.focus = (m.focus + len(m.inputs) - 1) % len(m.inputs)
+			m.focus--
+			m.message = ""
 			return m.focusInput()
 		case "enter":
+			if err := m.validateWizardStep(); err != nil {
+				m.message = err.Error()
+				return m, nil
+			}
 			if m.focus < len(m.inputs)-1 {
 				m.inputs[m.focus].Blur()
 				m.focus++
+				m.message = ""
 				return m.focusInput()
 			}
 			return m.saveWizard()
@@ -117,7 +123,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if m.screen == home {
-		if key == "ctrl+c" || key == "q" || key == "esc" {
+		if key == "esc" {
 			return m, tea.Quit
 		}
 		if key == "c" {
@@ -150,8 +156,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "ctrl+c", "q":
-		return m, tea.Quit
 	case "up", "k":
 		if m.project > 0 {
 			m.project--
@@ -191,7 +195,7 @@ func (m Model) focusInput() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) saveWizard() (tea.Model, tea.Cmd) {
-	cfg := config.Config{Server: strings.TrimSpace(m.inputs[0].Value()), Token: strings.TrimSpace(m.inputs[1].Value()), Projects: splitProjects(m.inputs[2].Value())}
+	cfg := config.Config{Server: strings.TrimSpace(m.inputs[0].Value()), Token: m.inputs[1].Value(), Projects: splitProjects(m.inputs[2].Value())}
 	if err := config.Save(m.configPath, cfg); err != nil {
 		m.message = "Cannot save configuration: " + err.Error()
 		return m, nil
@@ -202,6 +206,25 @@ func (m Model) saveWizard() (tea.Model, tea.Cmd) {
 	m.screen = dashboard
 	m.message = "Configuration saved with restricted permissions"
 	return m, nil
+}
+
+func (m Model) validateWizardStep() error {
+	if len(m.inputs) != 3 {
+		return errors.New("configuration fields are unavailable")
+	}
+	cfg := config.Config{
+		Server:   strings.TrimSpace(m.inputs[0].Value()),
+		Token:    m.inputs[1].Value(),
+		Projects: splitProjects(m.inputs[2].Value()),
+	}
+	switch m.focus {
+	case 0:
+		return config.Config{Server: cfg.Server, Token: strings.Repeat("x", 32), Projects: []string{"placeholder"}}.Validate()
+	case 1:
+		return config.Config{Server: "https://example.com", Token: cfg.Token, Projects: []string{"placeholder"}}.Validate()
+	default:
+		return cfg.Validate()
+	}
 }
 
 func (m Model) startOperation() (tea.Model, tea.Cmd) {

@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,7 +15,7 @@ import (
 	"github.com/piwi/encloud-tui/internal/engram"
 )
 
-func TestWizardSavesAndMasksToken(t *testing.T) {
+func TestWizardAdvancesOneValidatedStepAtATimeAndSaves(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	m := New(path)
 	updated, _ := m.Update(keyMessage("enter"))
@@ -22,10 +24,35 @@ func TestWizardSavesAndMasksToken(t *testing.T) {
 		t.Fatalf("screen = %v, want wizard", m.screen)
 	}
 	token := "12345678901234567890123456789012"
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	if m.focus != 0 || !strings.Contains(m.message, "server must be an HTTPS URL") {
+		t.Fatalf("invalid server advanced: step=%d message=%q", m.focus, m.message)
+	}
 	m.inputs[0].SetValue("https://engram.example.com")
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	if m.focus != 1 || m.message != "" {
+		t.Fatalf("server did not advance to token: step=%d message=%q", m.focus, m.message)
+	}
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	if m.focus != 1 || !strings.Contains(m.message, "token must contain 32 to 512") {
+		t.Fatalf("invalid token advanced: step=%d message=%q", m.focus, m.message)
+	}
 	m.inputs[1].SetValue(token)
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	if m.focus != 2 || m.message != "" {
+		t.Fatalf("token did not advance to projects: step=%d message=%q", m.focus, m.message)
+	}
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	if m.focus != 2 || !strings.Contains(m.message, "at least one project") {
+		t.Fatalf("invalid projects saved: step=%d message=%q", m.focus, m.message)
+	}
 	m.inputs[2].SetValue("alpha, beta")
-	updated, _ = m.saveWizard()
+	updated, _ = m.Update(keyMessage("enter"))
 	m = updated.(Model)
 	if m.screen != dashboard {
 		t.Fatalf("screen = %v, want dashboard", m.screen)
@@ -35,6 +62,74 @@ func TestWizardSavesAndMasksToken(t *testing.T) {
 	}
 	if _, err := config.Load(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWizardBackAndEscapeDiscardDraft(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := config.Config{Server: "https://engram.example.com", Token: "12345678901234567890123456789012", Projects: []string{"alpha"}}
+	if err := config.Save(path, original); err != nil {
+		t.Fatal(err)
+	}
+	m := New(path)
+	updated, _ := m.Update(keyMessage("c"))
+	m = updated.(Model)
+	m.inputs[0].SetValue("https://edited.example.com")
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	updated, _ = m.Update(keyMessage("shift+tab"))
+	m = updated.(Model)
+	if m.focus != 0 {
+		t.Fatalf("back step = %d, want 0", m.focus)
+	}
+	updated, _ = m.Update(keyMessage("esc"))
+	m = updated.(Model)
+	if m.screen != home || len(m.inputs) != 0 {
+		t.Fatalf("escape did not return home and discard draft: %#v", m)
+	}
+	if !reflect.DeepEqual(m.cfg, original) || !reflect.DeepEqual(m.storedCfg, original) {
+		t.Fatalf("escape changed in-memory configuration: cfg=%#v stored=%#v", m.cfg, m.storedCfg)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, original) {
+		t.Fatalf("escape changed saved configuration: %#v", loaded)
+	}
+}
+
+func TestWizardEditsExistingConfigurationOnlyAfterFinalSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := config.Config{Server: "https://engram.example.com", Token: "12345678901234567890123456789012", Projects: []string{"alpha"}}
+	if err := config.Save(path, original); err != nil {
+		t.Fatal(err)
+	}
+	m := New(path)
+	updated, _ := m.Update(keyMessage("c"))
+	m = updated.(Model)
+	m.inputs[0].SetValue("https://updated.example.com")
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	m.inputs[1].SetValue("abcdefghijklmnopqrstuvwxyz123456")
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	m.inputs[2].SetValue("beta, gamma")
+	updated, _ = m.Update(keyMessage("enter"))
+	m = updated.(Model)
+	if m.screen != dashboard {
+		t.Fatalf("screen = %v, want dashboard", m.screen)
+	}
+	want := config.Config{Server: "https://updated.example.com", Token: "abcdefghijklmnopqrstuvwxyz123456", Projects: []string{"beta", "gamma"}}
+	if !reflect.DeepEqual(m.cfg, want) || !reflect.DeepEqual(m.storedCfg, want) {
+		t.Fatalf("saved config = %#v, want %#v", m.cfg, want)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, want) {
+		t.Fatalf("persisted config = %#v, want %#v", loaded, want)
 	}
 }
 
@@ -117,7 +212,7 @@ func TestHomeRoutesToDashboardAndConfiguration(t *testing.T) {
 	}
 }
 
-func TestWizardViewRendersInitialConfigurationLayout(t *testing.T) {
+func TestWizardViewRendersFocusedFullScreenStepWithoutWelcomeLogo(t *testing.T) {
 	m := Model{screen: wizard, width: 100, height: 32}
 	m.setupInputs(config.Config{})
 	if got := m.inputs[0].Styles().Focused.Text.GetForeground(); got != successGreen {
@@ -126,26 +221,58 @@ func TestWizardViewRendersInitialConfigurationLayout(t *testing.T) {
 	view := stripANSI(m.wizardView())
 
 	for _, text := range []string{
-		"EnCloud TUI", "Initial configuration", "Step 1 of 2", "Next: Sync dashboard",
-		"Configure your cloud connection to continue.", "After setup, EnCloud TUI will open the full sync dashboard.",
-		"Server URL", "Cloud server base URL", "Cloud Token", "Your EnCloud API token", "Projects", "Comma-separated project IDs",
-		"[x] Preview config", "Required before continuing", "tab Next field", "enter Save & continue", "esc Cancel",
-		"Press Enter to save and start configuration.",
+		"Initial Configuration", "Step 1 of 3", "Server URL", "HTTPS server URL",
+		"Enter continues to the next step.", "[ Enter ]", "Continue", "[ Esc ]", "Discard & return home", "[ Ctrl+C ]", "Quit",
 	} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("wizard view missing %q:\n%s", text, view)
 		}
 	}
-	if strings.Count(view, "╔") < 4 {
-		t.Fatalf("wizard view = %q, want bordered panel and inputs", view)
+	if strings.Contains(view, "Cloud Token") || strings.Contains(view, "Projects") || strings.Contains(view, "██") {
+		t.Fatalf("wizard view exposed another step or the welcome logo:\n%s", view)
+	}
+	if strings.Count(view, "╔") != 1 || strings.Count(view, "╚") != 1 {
+		t.Fatalf("wizard view = %q, want one double-line full-screen box", view)
+	}
+	if strings.Index(view, "Initial Configuration") < strings.Index(view, "╔") {
+		t.Fatalf("wizard title rendered outside the panel:\n%s", view)
+	}
+	if !strings.Contains(m.wizardView(), successStyle.Bold(true).Render("Initial Configuration")) {
+		t.Fatalf("wizard title does not use the green theme:\n%s", m.wizardView())
+	}
+	for _, line := range strings.Split(stripANSI(m.View().Content), "\n") {
+		if strings.Contains(line, "╔") && lipgloss.Width(line) != m.width {
+			t.Fatalf("full-screen box width = %d, want %d: %q", lipgloss.Width(line), m.width, line)
+		}
+	}
+}
+
+func TestWizardRendersEachFocusedStep(t *testing.T) {
+	m := Model{screen: wizard, width: 100, height: 32}
+	m.setupInputs(config.Config{})
+	for _, tt := range []struct {
+		step  int
+		label string
+	}{
+		{0, "Server URL"},
+		{1, "Cloud Token"},
+		{2, "Projects"},
+	} {
+		t.Run(tt.label, func(t *testing.T) {
+			m.focus = tt.step
+			view := stripANSI(m.wizardView())
+			if !strings.Contains(view, fmt.Sprintf("Step %d of 3", tt.step+1)) || !strings.Contains(view, tt.label) {
+				t.Fatalf("step %d missing label or progress:\n%s", tt.step+1, view)
+			}
+		})
 	}
 }
 
 func TestWizardViewKeepsErrorsAndFitsCompactTerminals(t *testing.T) {
-	m := Model{screen: wizard, width: 40, height: 20, message: "Cannot save configuration: token must contain 32 to 512 non-whitespace characters"}
+	m := Model{screen: wizard, width: 40, height: 20, message: "token must contain 32 to 512 non-whitespace characters"}
 	m.setupInputs(config.Config{})
 	view := stripANSI(m.wizardView())
-	if !strings.Contains(view, "Cannot save configuration: token must") || !strings.Contains(view, "characters") {
+	if !strings.Contains(view, "token must contain 32 to 512") || !strings.Contains(view, "characters") {
 		t.Fatalf("wizard view missing save error: %s", view)
 	}
 	for _, line := range strings.Split(view, "\n") {
@@ -273,17 +400,15 @@ func TestHomeMenuNavigationAndActionRouting(t *testing.T) {
 	}
 }
 
-func TestSharedHeaderKeepsAnimatedLogoAcrossScreens(t *testing.T) {
-	m := Model{screen: wizard}
-	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = updated.(Model)
-	if !m.welcomeAnimating || cmd == nil {
-		t.Fatal("shared header did not start logo animation")
-	}
-	updated, _ = m.Update(welcomeTickMsg{})
-	m = updated.(Model)
-	if !strings.Contains(stripANSI(m.shellHeader()), string([]rune(welcomeLogoLines()[0])[:1])) {
-		t.Fatal("shared header did not render logo reveal")
+func TestSubmenuViewsDoNotRenderWelcomeLogo(t *testing.T) {
+	for _, current := range []screen{wizard, dashboard, confirm, running} {
+		m := Model{screen: current, width: 100, height: 30}
+		if current == wizard {
+			m.setupInputs(config.Config{})
+		}
+		if view := stripANSI(m.View().Content); strings.Contains(view, "██") {
+			t.Fatalf("screen %v rendered welcome logo:\n%s", current, view)
+		}
 	}
 }
 
@@ -412,17 +537,72 @@ func TestShellHeaderUsesCompactFallbackWhenConstrained(t *testing.T) {
 	}
 }
 
-func TestHomeQuitKeysQuit(t *testing.T) {
+func TestNonInputScreensQuitWithQOrCtrlC(t *testing.T) {
 	for _, key := range []string{"q", "ctrl+c"} {
 		t.Run(key, func(t *testing.T) {
-			_, cmd := (Model{screen: home}).Update(keyMessage(key))
-			if cmd == nil {
-				t.Fatal("quit command is nil")
-			}
-			if _, ok := cmd().(tea.QuitMsg); !ok {
-				t.Fatalf("command message = %T, want tea.QuitMsg", cmd())
+			for _, current := range []screen{home, dashboard, confirm, running} {
+				m := Model{screen: current}
+				_, cmd := m.Update(keyMessage(key))
+				if cmd == nil {
+					t.Fatalf("screen %v quit command is nil", current)
+				}
+				if _, ok := cmd().(tea.QuitMsg); !ok {
+					t.Fatalf("screen %v command message = %T, want tea.QuitMsg", current, cmd())
+				}
 			}
 		})
+	}
+}
+
+func TestWizardAcceptsQAsInputAndQuitsWithCtrlC(t *testing.T) {
+	m := Model{screen: wizard}
+	m.setupInputs(config.Config{})
+	updated, cmd := m.Update(keyMessage("q"))
+	m = updated.(Model)
+	if m.inputs[0].Value() != "q" {
+		t.Fatalf("q = input value %q, want q", m.inputs[0].Value())
+	}
+	if cmd != nil {
+		if _, ok := cmd().(tea.QuitMsg); ok {
+			t.Fatal("q returned a quit command")
+		}
+	}
+	_, cmd = m.Update(keyMessage("ctrl+c"))
+	if cmd == nil {
+		t.Fatal("ctrl+c quit command is nil")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("ctrl+c command message = %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func TestShortcutFootersUseContextualBadges(t *testing.T) {
+	valid := config.Config{Server: "https://engram.example.com", Token: "12345678901234567890123456789012", Projects: []string{"alpha"}}
+	for _, tt := range []struct {
+		name string
+		view string
+		want []string
+	}{
+		{"home", Model{screen: home}.homeView(), []string{"[ Enter ] Select", "[ q / Ctrl+C ] Quit"}},
+		{"dashboard", Model{screen: dashboard, cfg: valid, selected: map[string]bool{"alpha": true}, statuses: map[string]string{"alpha": "Idle"}}.dashboardView(), []string{"[ Space ] Select", "[ q / Ctrl+C ] Quit"}},
+		{"wizard", Model{screen: wizard, focus: 1}.wizardFooter(false), []string{"[ Shift+Tab ] Back", "[ Enter ] Continue", "[ Esc ] Discard & return home", "[ Ctrl+C ] Quit"}},
+		{"confirmation", Model{screen: confirm}.confirmView(), []string{"[ Enter / y ] Confirm", "[ Esc / n ] Cancel", "[ q / Ctrl+C ] Quit"}},
+		{"running", Model{screen: running}.runningView(), []string{"[ Esc ] Cancel operation", "[ q / Ctrl+C ] Quit"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			view := stripANSI(tt.view)
+			for _, text := range tt.want {
+				if !strings.Contains(view, text) {
+					t.Fatalf("footer missing %q:\n%s", text, view)
+				}
+			}
+		})
+	}
+	if strings.Contains(stripANSI(Model{screen: dashboard, cfg: valid, selected: map[string]bool{"alpha": true}, statuses: map[string]string{"alpha": "Idle"}}.dashboardView()), "[ Up/Down ] Navigate") {
+		t.Fatal("dashboard footer retained the navigation shortcut hint")
+	}
+	if got := shortcutStyle.GetForeground(); got == successGreen {
+		t.Fatalf("shortcut color = %v, want a complementary accent", got)
 	}
 }
 
