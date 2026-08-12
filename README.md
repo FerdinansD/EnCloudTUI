@@ -27,7 +27,6 @@ EnCloud TUI owns the terminal interface, secure local persistence, process orche
 ### Requirements
 
 - Linux or macOS.
-- Go 1.25 or newer.
 - The official `engram` executable installed separately and available on `PATH`.
 - An HTTPS Engram Cloud server, a valid public Cloud token, and one or more known project IDs.
 
@@ -41,9 +40,40 @@ engram sync --help
 
 EnCloud TUI does not bundle, install, or replace Engram. Use the [official Engram repository](https://github.com/Gentleman-Programming/engram) for its current installation instructions.
 
+### Install With Homebrew
+
+Install EnCloud TUI from the official tap:
+
+```bash
+brew install FerdinansD/tap/encloud-tui
+```
+
+Update an existing installation with:
+
+```bash
+brew update && brew upgrade encloud-tui
+```
+
+Run `encloud-tui` to open the interface. The first launch opens the configuration wizard.
+
+### Install From A Release
+
+Download the archive for your operating system and architecture from the [latest GitHub Release](https://github.com/FerdinansD/EnCloudTUI/releases/latest). Each release provides Linux and macOS archives for `amd64` and `arm64`, plus checksums and SBOMs.
+
+Verify the downloaded archive against `checksums.txt`, then extract and install it in a directory on `PATH`. For example, on Linux `amd64`:
+
+```bash
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf encloud-tui_*_linux_amd64.tar.gz
+install -m 0755 encloud-tui ~/.local/bin/encloud-tui
+encloud-tui --version
+```
+
+Run `encloud-tui` to open the interface. The first launch opens the configuration wizard.
+
 ### Install From Source
 
-Source installation is the only documented installation path. From a checkout of this repository:
+Source installation requires Go 1.25 or newer. From a checkout of this repository:
 
 ```bash
 make build
@@ -51,8 +81,6 @@ make build
 ```
 
 The first launch opens the configuration wizard. Enter the server URL, Cloud token, and comma-separated project IDs. Use `make run` instead for an iterative development session.
-
-> **No EnCloud TUI release or Homebrew package is published.** The public repository does not currently provide release archives, a tap, or a formula. Do not use guessed download URLs or `brew` commands.
 
 ## How It Works
 
@@ -153,9 +181,9 @@ Update documentation when a change alters configuration, CLI invocation, snapsho
 
 ## Distribution Status
 
-The repository contains automation intended to build Linux and macOS archives for `amd64` and `arm64`, with checksums and SBOMs, when a maintainer publishes a version tag. Configuration is not evidence that an artifact exists.
+The current public version is [`v0.1.1`](https://github.com/FerdinansD/EnCloudTUI/releases/tag/v0.1.1). GitHub Releases provides Linux and macOS archives for `amd64` and `arm64`, SHA-256 checksums, and an SBOM for every archive. The official [`FerdinansD/homebrew-tap`](https://github.com/FerdinansD/homebrew-tap) provides the Homebrew formula.
 
-There is currently no published EnCloud TUI version, GitHub Release archive, Homebrew tap, or formula. Build from source until this README names a real published artifact and its exact installation path. The `engram` CLI will remain a separate dependency.
+The `engram` CLI remains a separate dependency regardless of how EnCloud TUI is installed. EnCloud TUI is not distributed through `homebrew-core`.
 
 ## License
 

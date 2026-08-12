@@ -38,3 +38,15 @@ release:
   github:
     owner: FerdinansD
     name: EnCloudTUI
+
+brews:
+  - repository:
+      owner: FerdinansD
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    name: encloud-tui
+    homepage: "https://github.com/FerdinansD/EnCloudTUI"
+    description: "Terminal UI for deliberate Engram Cloud synchronization"
+    license: "MIT"
+    commit_msg_template: "chore: update encloud-tui formula to {{ .Tag }}"
