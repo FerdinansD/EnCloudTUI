@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -10,12 +11,29 @@ import (
 	"github.com/piwi/encloud-tui/internal/tui"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	if printVersion(os.Args[1:], os.Stdout) {
+		return
+	}
 	model := tui.New(ConfigPathFromEnvironment())
 	if _, err := tea.NewProgram(model).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "encloud-tui:", err)
 		os.Exit(1)
 	}
+}
+
+func printVersion(args []string, output io.Writer) bool {
+	if len(args) != 1 || args[0] != "--version" {
+		return false
+	}
+	fmt.Fprintf(output, "encloud-tui %s\ncommit: %s\ndate: %s\n", version, commit, date)
+	return true
 }
 
 func ConfigPathFromEnvironment() string {

@@ -16,7 +16,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if m.screen == wizard && len(m.inputs) > 0 {
+		if (m.screen == wizard || m.screen == addProject) && len(m.inputs) > 0 {
 			m.sizeWizardInputs()
 		}
 		if !m.welcomeRevealStarted && m.welcomeCanAnimate() {
@@ -49,7 +49,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
-	if m.screen == wizard {
+	if m.screen == wizard || m.screen == addProject {
 		var cmd tea.Cmd
 		m.inputs[m.focus], cmd = m.inputs[m.focus].Update(msg)
 		return m, cmd
@@ -67,15 +67,70 @@ func welcomeTick() tea.Cmd {
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+c" || (key == "q" && m.screen != wizard) {
+	if m.screen == running && m.cancel != nil {
+		switch key {
+		case "q", "ctrl+c":
+			m.quitAfterOperation = true
+			m.cancel()
+			m.message = "Cancelling operation; EnCloud TUI will quit when it finishes."
+			return m, nil
+		case "esc":
+			m.cancel()
+			m.message = "Cancelling operation..."
+			return m, nil
+		}
+		return m, nil
+	}
+	if key == "q" || key == "ctrl+c" {
 		return m, tea.Quit
 	}
 	if m.screen == running {
 		if key == "esc" {
-			if m.cancel != nil {
-				m.cancel()
-				m.message = "Cancelling operation..."
+			m.returnToOrigin()
+			return m, nil
+		}
+		return m, nil
+	}
+	if m.screen == syncCenter {
+		switch key {
+		case "esc":
+			m.returnToOrigin()
+		case "up", "k":
+			if m.project > 0 {
+				m.project--
 			}
+		case "down", "j":
+			if m.project < len(m.cfg.Projects)-1 {
+				m.project++
+			}
+		case " ", "space":
+			if len(m.cfg.Projects) > 0 {
+				name := m.cfg.Projects[m.project]
+				m.selected[name] = !m.selected[name]
+				m.message = ""
+			}
+		case "p", "u", "s":
+			var operation engram.Mode
+			switch key {
+			case "p":
+				operation = engram.Pull
+			case "u":
+				operation = engram.Push
+			case "s":
+				operation = engram.Status
+			}
+			if len(m.chosenProjects()) == 0 {
+				m.message = "Select at least one project before running " + operationLabel(string(operation))
+				return m, nil
+			}
+			m.pending = operation
+			m.openScreen(confirm)
+		case "a":
+			m.openScreen(addProject)
+			m.setupProjectInput()
+		case "c":
+			m.openScreen(wizard)
+			m.setupInputs(m.storedCfg)
 		}
 		return m, nil
 	}
@@ -84,7 +139,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "y", "enter":
 			return m.startOperation()
 		case "n", "esc":
-			m.screen = dashboard
+			m.returnToOrigin()
 			m.message = "Operation cancelled"
 		}
 		return m, nil
@@ -92,7 +147,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.screen == wizard {
 		switch key {
 		case "esc":
-			m.screen = home
+			m.returnToOrigin()
 			m.inputs = nil
 			m.focus = 0
 			m.message = ""
@@ -122,12 +177,26 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.inputs[m.focus], cmd = m.inputs[m.focus].Update(msg)
 		return m, cmd
 	}
+	if m.screen == addProject {
+		switch key {
+		case "esc":
+			m.returnToOrigin()
+			m.inputs = nil
+			m.message = ""
+			return m, nil
+		case "enter":
+			return m.saveProject()
+		}
+		var cmd tea.Cmd
+		m.inputs[0], cmd = m.inputs[0].Update(msg)
+		return m, cmd
+	}
 	if m.screen == home {
 		if key == "esc" {
 			return m, tea.Quit
 		}
 		if key == "c" {
-			m.screen = wizard
+			m.openScreen(wizard)
 			m.setupInputs(m.storedCfg)
 			return m, nil
 		}
@@ -144,14 +213,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			switch items[m.homeMenu] {
 			case "Initial configuration", "Edit configuration":
-				m.screen = wizard
+				m.openScreen(wizard)
 				m.setupInputs(m.storedCfg)
-			case "Open workspace":
-				m.screen = dashboard
 			case "Add project":
-				m.message = "Add project: Coming soon"
+				m.openScreen(addProject)
+				m.setupProjectInput()
 			case "Sync center":
-				m.message = "Sync center: Coming soon"
+				m.openScreen(syncCenter)
 			case "Exit":
 				return m, tea.Quit
 			}
@@ -160,6 +228,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
+	case "esc":
+		m.returnToOrigin()
+		return m, nil
 	case "up", "k":
 		if m.project > 0 {
 			m.project--
@@ -168,7 +239,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.project < len(m.cfg.Projects)-1 {
 			m.project++
 		}
-	case " ":
+	case " ", "space":
 		if len(m.cfg.Projects) > 0 {
 			name := m.cfg.Projects[m.project]
 			m.selected[name] = !m.selected[name]
@@ -182,13 +253,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selected[project] = !all
 		}
 	case "p":
-		m.pending, m.screen = engram.Pull, confirm
+		m.pending = engram.Pull
+		m.openScreen(confirm)
 	case "u":
-		m.pending, m.screen = engram.Push, confirm
+		m.pending = engram.Push
+		m.openScreen(confirm)
 	case "s":
-		m.pending, m.screen = engram.Status, confirm
+		m.pending = engram.Status
+		m.openScreen(confirm)
 	case "c":
-		m.screen = wizard
+		m.openScreen(wizard)
 		m.setupInputs(m.storedCfg)
 	}
 	return m, nil
@@ -200,15 +274,48 @@ func (m Model) focusInput() (tea.Model, tea.Cmd) {
 
 func (m Model) saveWizard() (tea.Model, tea.Cmd) {
 	cfg := config.Config{Server: strings.TrimSpace(m.inputs[0].Value()), Token: m.inputs[1].Value(), Projects: splitProjects(m.inputs[2].Value())}
-	if err := config.Save(m.configPath, cfg); err != nil {
+	err := config.Save(m.configPath, cfg)
+	if err != nil && !config.SaveCommitted(err) {
 		m.message = "Cannot save configuration: " + err.Error()
 		return m, nil
 	}
 	m.storedCfg = cfg
 	m.cfg = cfg
 	m.resetProjects()
-	m.screen = dashboard
+	m.returnToOrigin()
 	m.message = "Configuration saved with restricted permissions"
+	if err != nil {
+		m.message += "; directory sync could not be confirmed"
+	}
+	m.rebindSyncState(cfg.Server, true)
+	return m, nil
+}
+
+func (m Model) saveProject() (tea.Model, tea.Cmd) {
+	if len(m.inputs) != 1 {
+		m.message = "Project field is unavailable"
+		return m, nil
+	}
+	cfg := m.storedCfg
+	cfg.Projects = append(cfg.Projects, strings.TrimSpace(m.inputs[0].Value()))
+	if err := cfg.Validate(); err != nil {
+		m.message = err.Error()
+		return m, nil
+	}
+	err := config.Save(m.configPath, cfg)
+	if err != nil && !config.SaveCommitted(err) {
+		m.message = "Cannot save project: " + err.Error()
+		return m, nil
+	}
+	m.storedCfg = cfg
+	m.cfg = cfg
+	m.resetProjects()
+	m.returnToOrigin()
+	m.message = "Project added"
+	if err != nil {
+		m.message += "; directory sync could not be confirmed"
+	}
+	m.rebindSyncState(cfg.Server, true)
 	return m, nil
 }
 
@@ -234,55 +341,76 @@ func (m Model) validateWizardStep() error {
 func (m Model) startOperation() (tea.Model, tea.Cmd) {
 	projects := m.chosenProjects()
 	if len(projects) == 0 {
-		m.screen = dashboard
+		m.returnToOrigin()
 		m.message = "Select at least one project"
 		return m, nil
 	}
-	m.logs = nil
+	m.resetOperationView()
 	for _, project := range projects {
 		m.statuses[project] = "Queued"
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	m.events = (engram.Runner{}).Start(ctx, m.cfg, m.pending, projects)
+	m.events = (engram.Runner{ConfigPath: m.configPath}).Start(ctx, m.cfg, m.pending, projects)
 	m.screen = running
 	return m, tea.Batch(m.spinner.Tick, nextEvent(m.events))
 }
 
 func (m Model) applyEvent(event engram.Event) (tea.Model, tea.Cmd) {
-	if event.Text != "" {
-		prefix := event.Project
-		if prefix == "" {
-			prefix = "system"
+	if event.Project != "" && !event.Done && event.Text == event.Project+": "+string(m.pending) {
+		if m.activeProject != "" && m.activeProject != event.Project && m.statuses[m.activeProject] == "Running" {
+			m.statuses[m.activeProject] = "Complete"
 		}
-		m.logs = append(m.logs, prefix+": "+redact(event.Text, m.cfg.Token))
+		m.activeProject = event.Project
+	}
+	if event.Text != "" && !event.Done {
+		m.appendOperationLog(event.Project, event.Text)
 	}
 	if event.Project != "" && event.Done == false {
 		m.statuses[event.Project] = "Running"
 	}
 	if event.Done {
 		m.cancel = nil
-		m.screen = dashboard
+		m.events = nil
+		m.screen = running
 		if errors.Is(event.Err, context.Canceled) {
+			m.operationOutcome = "Cancelled"
 			m.message = "Operation cancelled"
-			m.logs = append(m.logs, "system: Operation cancelled")
+			m.appendOperationLog("", m.message)
+			if m.activeProject != "" && m.statuses[m.activeProject] == "Running" {
+				m.statuses[m.activeProject] = "Cancelled"
+			}
 			for _, project := range m.chosenProjects() {
-				if m.statuses[project] == "Running" || m.statuses[project] == "Queued" {
+				if m.statuses[project] == "Queued" {
 					m.statuses[project] = "Cancelled"
 				}
 			}
 		} else if event.Err != nil {
+			m.operationOutcome = "Failed"
 			m.message = "Operation failed: " + redact(event.Err.Error(), m.cfg.Token)
+			m.appendOperationLog("", m.message)
+			if m.activeProject != "" && len(m.projectLogs[m.activeProject]) > 0 {
+				m.appendOperationLog(m.activeProject, m.message)
+			}
+			if m.activeProject != "" && m.statuses[m.activeProject] == "Running" {
+				m.statuses[m.activeProject] = "Failed"
+			}
 			for _, project := range m.chosenProjects() {
-				if m.statuses[project] == "Running" || m.statuses[project] == "Queued" {
-					m.statuses[project] = "Failed"
+				if m.statuses[project] == "Queued" {
+					m.statuses[project] = "Skipped"
 				}
 			}
 		} else {
+			m.operationOutcome = "Completed"
 			m.message = event.Text
-			for _, project := range m.chosenProjects() {
-				m.statuses[project] = "Complete"
+			m.appendOperationLog("", m.message)
+			if m.activeProject != "" && m.statuses[m.activeProject] == "Running" {
+				m.statuses[m.activeProject] = "Complete"
 			}
+		}
+		m.persistSyncState()
+		if m.quitAfterOperation {
+			return m, tea.Quit
 		}
 		return m, nil
 	}

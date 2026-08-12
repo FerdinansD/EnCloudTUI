@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piwi/encloud-tui/internal/config"
 )
@@ -66,6 +67,40 @@ func TestRunnerReportsMissingCLI(t *testing.T) {
 	}
 }
 
+func TestStreamOutputHandlesBoundedLongLines(t *testing.T) {
+	var events []Event
+	emit := func(event Event) bool {
+		events = append(events, event)
+		return true
+	}
+	if err := streamOutput(strings.NewReader(strings.Repeat("x", 128*1024)+"\n"), "alpha", "secret", emit); err != nil {
+		t.Fatalf("streamOutput() error = %v", err)
+	}
+	if len(events) != 1 || len(events[0].Text) != 128*1024 {
+		t.Fatalf("events = %#v, want one complete long line", events)
+	}
+	if err := streamOutput(strings.NewReader(strings.Repeat("x", maxScannerTokenSize+1)), "alpha", "secret", emit); err == nil {
+		t.Fatal("streamOutput() succeeded for a line above the scanner limit")
+	}
+}
+
+func TestRunnerReturnsScannerErrorsWithoutHanging(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a controlled child process")
+	}
+	t.Setenv("ENGRAM_TUI_TEST_HELPER", "1")
+	t.Setenv("ENGRAM_TUI_TEST_COMMANDS", filepath.Join(t.TempDir(), "commands"))
+	t.Setenv("ENGRAM_TUI_TEST_LONG_OUTPUT", "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := Runner{Binary: os.Args[0]}
+	cfg := config.Config{Token: "12345678901234567890123456789012"}
+	err := runner.run(ctx, cfg, t.TempDir(), "alpha", []string{"-test.run=TestRunnerHelperProcess", "--"}, func(Event) bool { return true })
+	if err == nil || ctx.Err() != nil {
+		t.Fatalf("run() error = %v, context = %v; want scanner error before timeout", err, ctx.Err())
+	}
+}
+
 func TestRunnerExecutesSequentiallyAndRedactsStreamedOutput(t *testing.T) {
 	if os.Getenv("ENGRAM_TUI_TEST_HELPER") == "1" {
 		return
@@ -79,8 +114,14 @@ func TestRunnerExecutesSequentiallyAndRedactsStreamedOutput(t *testing.T) {
 	t.Setenv("ENGRAM_TUI_TEST_COMMANDS", path)
 	t.Setenv("ENGRAM_TOKEN", "inherited-private-token-must-not-be-used")
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "inherited-token-must-not-be-used")
-	runner := Runner{Binary: os.Args[0]}
+	t.Setenv("ENGRAM_DATA_DIR", "inherited-data-dir-must-not-be-used")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	runner := Runner{Binary: os.Args[0], ConfigPath: "/tmp/encloud-a.json"}
 	cfg := config.Config{Server: "https://engram.example.com", Token: token, Projects: []string{"alpha", "beta"}}
+	dataDir, err := runner.runtimeDataDir(cfg.Server)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var events []Event
 	for event := range runner.Start(context.Background(), cfg, Status, cfg.Projects) {
@@ -100,11 +141,11 @@ func TestRunnerExecutesSequentiallyAndRedactsStreamedOutput(t *testing.T) {
 	}
 	got := strings.Split(strings.TrimSpace(string(data)), "\n")
 	want := []string{
-		"cloud config --server https://engram.example.com|" + token + "|",
-		"cloud enroll alpha|" + token + "|",
-		"sync --cloud --status --project alpha|" + token + "|",
-		"cloud enroll beta|" + token + "|",
-		"sync --cloud --status --project beta|" + token + "|",
+		"cloud config --server https://engram.example.com|" + token + "||" + dataDir,
+		"cloud enroll alpha|" + token + "||" + dataDir,
+		"sync --cloud --status --project alpha|" + token + "||" + dataDir,
+		"cloud enroll beta|" + token + "||" + dataDir,
+		"sync --cloud --status --project beta|" + token + "||" + dataDir,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("commands = %#v, want %#v", got, want)
@@ -113,6 +154,38 @@ func TestRunnerExecutesSequentiallyAndRedactsStreamedOutput(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("commands = %#v, want %#v", got, want)
 		}
+	}
+}
+
+func TestRunnerRuntimeDataDirIsolatesServerAndConfiguration(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	base := Runner{ConfigPath: "/tmp/encloud-a.json"}
+	dataDir, err := base.runtimeDataDir("https://engram-a.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(dataDir); err != nil || info.Mode().Perm() != 0700 {
+		t.Fatalf("isolated data directory = %q, info = %#v, err = %v; want mode 0700", dataDir, info, err)
+	}
+	for _, runner := range []Runner{
+		{ConfigPath: "/tmp/encloud-b.json"},
+		{ConfigPath: "/tmp/encloud-a.json"},
+	} {
+		server := "https://engram-a.example.com"
+		if runner.ConfigPath == "/tmp/encloud-a.json" {
+			server = "https://engram-b.example.com"
+		}
+		otherDataDir, err := runner.runtimeDataDir(server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if otherDataDir == dataDir {
+			t.Fatalf("data directories = %q, want distinct identities", otherDataDir)
+		}
+	}
+	repeatedDataDir, err := base.runtimeDataDir("https://engram-a.example.com")
+	if err != nil || repeatedDataDir != dataDir {
+		t.Fatalf("repeated data directory = %q, err = %v; want %q", repeatedDataDir, err, dataDir)
 	}
 }
 
@@ -132,8 +205,12 @@ func TestRunnerHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	defer file.Close()
+	if os.Getenv("ENGRAM_TUI_TEST_LONG_OUTPUT") == "1" {
+		fmt.Print(strings.Repeat("x", maxScannerTokenSize+1))
+		return
+	}
 	fmt.Printf("token=%s\n", os.Getenv("ENGRAM_CLOUD_TOKEN"))
-	if _, err := fmt.Fprintln(file, strings.Join(args, " ")+"|"+os.Getenv("ENGRAM_CLOUD_TOKEN")+"|"+os.Getenv("ENGRAM_TOKEN")); err != nil {
+	if _, err := fmt.Fprintln(file, strings.Join(args, " ")+"|"+os.Getenv("ENGRAM_CLOUD_TOKEN")+"|"+os.Getenv("ENGRAM_TOKEN")+"|"+os.Getenv("ENGRAM_DATA_DIR")); err != nil {
 		os.Exit(2)
 	}
 	os.Exit(0)

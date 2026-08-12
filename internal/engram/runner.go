@@ -3,10 +3,12 @@ package engram
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/piwi/encloud-tui/internal/config"
@@ -18,6 +20,8 @@ const (
 	Pull   Mode = "pull"
 	Push   Mode = "push"
 	Status Mode = "status"
+
+	maxScannerTokenSize = 1024 * 1024
 )
 
 type Event struct {
@@ -28,7 +32,8 @@ type Event struct {
 }
 
 type Runner struct {
-	Binary string
+	Binary     string
+	ConfigPath string
 }
 
 func (r Runner) binary() string {
@@ -75,6 +80,11 @@ func (r Runner) Start(ctx context.Context, cfg config.Config, mode Mode, project
 			finish(Event{Done: true, Err: fmt.Errorf("Engram CLI is unavailable: %w", err)})
 			return
 		}
+		dataDir, err := r.runtimeDataDir(cfg.Server)
+		if err != nil {
+			finish(Event{Done: true, Err: err})
+			return
+		}
 		emit := func(event Event) bool {
 			select {
 			case events <- event:
@@ -83,7 +93,7 @@ func (r Runner) Start(ctx context.Context, cfg config.Config, mode Mode, project
 				return false
 			}
 		}
-		if err := r.run(ctx, cfg, "", []string{"cloud", "config", "--server", cfg.Server}, emit); err != nil {
+		if err := r.run(ctx, cfg, dataDir, "", []string{"cloud", "config", "--server", cfg.Server}, emit); err != nil {
 			finish(Event{Done: true, Err: err})
 			return
 		}
@@ -97,10 +107,10 @@ func (r Runner) Start(ctx context.Context, cfg config.Config, mode Mode, project
 				finish(Event{Done: true, Err: err})
 				return
 			}
-			if err := r.run(ctx, cfg, project, commands[0], emit); err != nil && ctx.Err() == nil {
+			if err := r.run(ctx, cfg, dataDir, project, commands[0], emit); err != nil && ctx.Err() == nil {
 				emit(Event{Project: project, Text: "enrollment skipped"})
 			}
-			if err := r.run(ctx, cfg, project, commands[1], emit); err != nil {
+			if err := r.run(ctx, cfg, dataDir, project, commands[1], emit); err != nil {
 				finish(Event{Done: true, Err: err})
 				return
 			}
@@ -114,9 +124,9 @@ func (r Runner) Start(ctx context.Context, cfg config.Config, mode Mode, project
 	return events
 }
 
-func (r Runner) run(ctx context.Context, cfg config.Config, project string, args []string, emit func(Event) bool) error {
+func (r Runner) run(ctx context.Context, cfg config.Config, dataDir, project string, args []string, emit func(Event) bool) error {
 	cmd := exec.CommandContext(ctx, r.binary(), args...)
-	cmd.Env = childEnvironment(cfg.Token)
+	cmd.Env = childEnvironment(cfg.Token, dataDir)
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("capture command output: %w", err)
@@ -125,36 +135,64 @@ func (r Runner) run(ctx context.Context, cfg config.Config, project string, args
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start Engram command: %w", err)
 	}
-	streamOutput(pipe, project, cfg.Token, emit)
+	streamErr := streamOutput(pipe, project, cfg.Token, emit)
+	if streamErr != nil {
+		_ = cmd.Process.Kill()
+	}
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("Engram operation cancelled: %w", ctx.Err())
 		}
+		if streamErr != nil {
+			return fmt.Errorf("stream Engram command output: %w", streamErr)
+		}
 		return fmt.Errorf("Engram command failed: %w", err)
+	}
+	if streamErr != nil {
+		return fmt.Errorf("stream Engram command output: %w", streamErr)
 	}
 	return nil
 }
 
-func childEnvironment(publicCloudToken string) []string {
-	environment := make([]string, 0, len(os.Environ())+1)
+func (r Runner) runtimeDataDir(server string) (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve EnCloud TUI data directory: %w", err)
+	}
+	identity := filepath.Clean(strings.TrimSpace(r.ConfigPath)) + "\x00" + strings.TrimSpace(server)
+	digest := sha256.Sum256([]byte(identity))
+	dataDir := filepath.Join(configDir, "encloud-tui", "engram", fmt.Sprintf("%x", digest))
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return "", fmt.Errorf("create isolated Engram data directory: %w", err)
+	}
+	if err := os.Chmod(dataDir, 0700); err != nil {
+		return "", fmt.Errorf("secure isolated Engram data directory: %w", err)
+	}
+	return dataDir, nil
+}
+
+func childEnvironment(publicCloudToken, dataDir string) []string {
+	environment := make([]string, 0, len(os.Environ())+2)
 	for _, value := range os.Environ() {
 		name, _, _ := strings.Cut(value, "=")
-		if name != "ENGRAM_TOKEN" && name != "ENGRAM_CLOUD_TOKEN" {
+		if name != "ENGRAM_TOKEN" && name != "ENGRAM_CLOUD_TOKEN" && name != "ENGRAM_DATA_DIR" {
 			environment = append(environment, value)
 		}
 	}
-	return append(environment, "ENGRAM_CLOUD_TOKEN="+publicCloudToken)
+	return append(environment, "ENGRAM_CLOUD_TOKEN="+publicCloudToken, "ENGRAM_DATA_DIR="+dataDir)
 }
 
-func streamOutput(reader io.Reader, project, secret string, emit func(Event) bool) {
+func streamOutput(reader io.Reader, project, secret string, emit func(Event) bool) error {
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64*1024), maxScannerTokenSize)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" && !strings.Contains(line, "ENGRAM_CLOUD_TOKEN") {
 			line = strings.ReplaceAll(line, secret, "[redacted]")
 			if !emit(Event{Project: project, Text: line}) {
-				return
+				return nil
 			}
 		}
 	}
+	return scanner.Err()
 }
